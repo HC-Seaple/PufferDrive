@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Waymo 2D Viewer</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      color: #202529;
+      background: #e9ece8;
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    button, input { font: inherit; letter-spacing: 0; }
+    button {
+      height: 34px;
+      border: 1px solid #aeb5b0;
+      border-radius: 5px;
+      background: #fff;
+      color: #202529;
+      padding: 0 12px;
+      cursor: pointer;
+    }
+    button:hover { background: #f1f3f0; }
+    button:disabled { opacity: .45; cursor: default; }
+    header {
+      height: 54px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 14px;
+      background: #f8f9f7;
+      border-bottom: 1px solid #c8ceca;
+    }
+    .title { font-size: 16px; font-weight: 650; margin-right: 8px; white-space: nowrap; }
+    .header-status {
+      min-width: 0;
+      flex: 1;
+      color: #606864;
+      font-size: 13px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .check { display: flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; }
+    main { height: calc(100% - 54px); display: grid; grid-template-columns: 310px minmax(0, 1fr); }
+    aside {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      background: #f4f5f2;
+      border-right: 1px solid #c8ceca;
+    }
+    .drop-zone {
+      height: 92px;
+      margin: 12px;
+      border: 2px dashed #99a39d;
+      border-radius: 6px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      color: #525b56;
+      background: #fff;
+      font-size: 14px;
+    }
+    .drop-zone strong { display: block; color: #252b28; margin-bottom: 5px; }
+    .drop-zone.dragging { border-color: #16845b; background: #eef8f2; color: #126947; }
+    .search-wrap { padding: 0 12px 10px; }
+    #search {
+      width: 100%; height: 34px; padding: 0 10px;
+      border: 1px solid #b8bfba; border-radius: 5px; background: #fff;
+    }
+    .list-summary { padding: 0 12px 8px; color: #68706c; font-size: 12px; }
+    #fileList { flex: 1; overflow: auto; border-top: 1px solid #d7dcd8; }
+    .file-row {
+      width: 100%; height: 43px; display: block; text-align: left;
+      border: 0; border-radius: 0; border-bottom: 1px solid #e0e4e1;
+      background: transparent; padding: 5px 12px;
+    }
+    .file-row:hover { background: #e8ece8; }
+    .file-row.active { background: #dcebe3; box-shadow: inset 3px 0 #16845b; }
+    .file-name, .file-path { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-name { font-size: 13px; color: #252b28; }
+    .file-path { font-size: 11px; color: #77807b; margin-top: 3px; }
+    .stage { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) 34px; background: #dfe3df; }
+    .canvas-wrap { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+    canvas { width: 100%; height: 100%; display: block; background: #ebe7df; }
+    .empty, .error {
+      position: absolute; inset: 0; display: grid; place-items: center;
+      padding: 30px; text-align: center; color: #5c6560; pointer-events: none;
+    }
+    .error { color: #9d392c; background: rgba(248, 246, 242, .92); }
+    .hidden { display: none; }
+    .stage-status {
+      display: flex; align-items: center; gap: 18px; padding: 0 12px;
+      background: #f8f9f7; border-top: 1px solid #c8ceca; color: #626a66; font-size: 12px;
+      overflow: hidden; white-space: nowrap;
+    }
+    .legend { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+    .legend span { display: flex; align-items: center; gap: 5px; }
+    .swatch { width: 10px; height: 10px; display: inline-block; }
+    @media (max-width: 760px) {
+      main { grid-template-columns: 240px minmax(0, 1fr); }
+      .legend { display: none; }
+      header .check { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title">Waymo 2D Viewer</div>
+    <button id="chooseButton" type="button">Choose folder</button>
+    <input id="folderInput" type="file" webkitdirectory multiple hidden>
+    <label class="check"><input id="trajectoryToggle" type="checkbox" checked> Trajectories</label>
+    <button id="saveButton" type="button" disabled>Save PNG</button>
+    <div id="headerStatus" class="header-status">No folder loaded</div>
+  </header>
+
+  <main>
+    <aside>
+      <div id="dropZone" class="drop-zone">
+        <div><strong>Drop a folder here</strong>Waymo scenario JSON files</div>
+      </div>
+      <div class="search-wrap"><input id="search" type="search" placeholder="Search scenario or filename" disabled></div>
+      <div id="listSummary" class="list-summary">0 JSON files</div>
+      <div id="fileList"></div>
+    </aside>
+
+    <section class="stage">
+      <div id="canvasWrap" class="canvas-wrap">
+        <canvas id="mapCanvas"></canvas>
+        <div id="emptyState" class="empty">Drop a folder or choose one to begin.</div>
+        <div id="errorState" class="error hidden"></div>
+      </div>
+      <div class="stage-status">
+        <span id="scenarioStatus">No scenario selected</span>
+        <span id="objectStatus"></span>
+        <div class="legend">
+          <span><i class="swatch" style="background:#1967d2"></i>ego</span>
+          <span><i class="swatch" style="background:#bf3f2f"></i>predict</span>
+          <span><i class="swatch" style="background:#2c8b57"></i>vehicle</span>
+          <span><i class="swatch" style="background:#8d5ac2"></i>pedestrian</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const state = { files: [], selected: null, scene: null, fileName: "", currentFrame: 0 };
+    const canvas = document.getElementById("mapCanvas");
+    const wrap = document.getElementById("canvasWrap");
+    const ctx = canvas.getContext("2d");
+    const dropZone = document.getElementById("dropZone");
+    const folderInput = document.getElementById("folderInput");
+    const fileList = document.getElementById("fileList");
+    const search = document.getElementById("search");
+    const emptyState = document.getElementById("emptyState");
+    const errorState = document.getElementById("errorState");
+    const saveButton = document.getElementById("saveButton");
+    const trajectoryToggle = document.getElementById("trajectoryToggle");
+
+    const colors = {
+      lane: "rgba(150,156,162,.55)", road_edge: "rgba(55,64,72,.9)",
+      road_line: "rgba(206,165,48,.9)", crosswalk: "rgba(124,111,176,.75)",
+      speed_bump: "rgba(214,111,44,.8)", stop_sign: "rgba(191,63,47,.9)",
+      driveway: "rgba(123,139,92,.7)"
+    };
+
+    document.getElementById("chooseButton").addEventListener("click", () => folderInput.click());
+    folderInput.addEventListener("change", () => loadFiles([...folderInput.files]));
+    search.addEventListener("input", renderFileList);
+    trajectoryToggle.addEventListener("change", drawScene);
+    saveButton.addEventListener("click", savePng);
+
+    ["dragenter", "dragover"].forEach(name => dropZone.addEventListener(name, event => {
+      event.preventDefault(); event.stopPropagation(); dropZone.classList.add("dragging");
+    }));
+    ["dragleave", "drop"].forEach(name => dropZone.addEventListener(name, event => {
+      event.preventDefault(); event.stopPropagation(); dropZone.classList.remove("dragging");
+    }));
+    dropZone.addEventListener("drop", async event => loadFiles(await filesFromDrop(event.dataTransfer)));
+
+    async function filesFromDrop(dataTransfer) {
+      const files = [];
+      async function visit(entry, prefix = "") {
+        if (entry.isFile) {
+          await new Promise(resolve => entry.file(file => {
+            Object.defineProperty(file, "displayPath", { value: prefix + file.name });
+            files.push(file); resolve();
+          }, resolve));
+          return;
+        }
+        if (entry.isDirectory) {
+          const reader = entry.createReader();
+          while (true) {
+            const entries = await new Promise(resolve => reader.readEntries(resolve));
+            if (!entries.length) break;
+            for (const child of entries) await visit(child, prefix + entry.name + "/");
+          }
+        }
+      }
+      const items = [...dataTransfer.items];
+      if (items.some(item => item.webkitGetAsEntry)) {
+        for (const item of items) {
+          const entry = item.webkitGetAsEntry && item.webkitGetAsEntry();
+          if (entry) await visit(entry);
+        }
+      } else {
+        files.push(...dataTransfer.files);
+      }
+      return files;
+    }
+
+    function loadFiles(files) {
+      state.files = files.filter(file => file.name.toLowerCase().endsWith(".json"))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      state.selected = null; state.scene = null;
+      search.disabled = !state.files.length;
+      document.getElementById("headerStatus").textContent = `${state.files.length.toLocaleString()} JSON files loaded`;
+      renderFileList();
+      if (state.files.length) selectFile(state.files[0]);
+      else showError("No JSON files were found in this folder.");
+    }
+
+    function renderFileList() {
+      const query = search.value.trim().toLowerCase();
+      const filtered = state.files.filter(file => {
+        const path = file.displayPath || file.webkitRelativePath || file.name;
+        return !query || path.toLowerCase().includes(query);
+      });
+      const shown = filtered.slice(0, 600);
+      document.getElementById("listSummary").textContent = filtered.length > 600
+        ? `${filtered.length.toLocaleString()} matches, showing first 600`
+        : `${filtered.length.toLocaleString()} JSON files`;
+      fileList.replaceChildren(...shown.map(file => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "file-row" + (file === state.selected ? " active" : "");
+        const path = file.displayPath || file.webkitRelativePath || file.name;
+        button.innerHTML = `<span class="file-name"></span><span class="file-path"></span>`;
+        button.querySelector(".file-name").textContent = file.name;
+        button.querySelector(".file-path").textContent = path === file.name ? `${(file.size / 1048576).toFixed(1)} MB` : path;
+        button.addEventListener("click", () => selectFile(file));
+        return button;
+      }));
+    }
+
+    async function selectFile(file) {
+      state.selected = file; renderFileList(); hideError();
+      emptyState.textContent = "Loading scenario..."; emptyState.classList.remove("hidden");
+      saveButton.disabled = true;
+      try {
+        const raw = JSON.parse(await file.text());
+        state.scene = normalizeScene(raw);
+        state.fileName = file.name;
+        state.currentFrame = Number.isInteger(raw.current_time_index) ? raw.current_time_index : 0;
+        emptyState.classList.add("hidden");
+        saveButton.disabled = false;
+        drawScene();
+      } catch (error) {
+        state.scene = null;
+        showError(error instanceof SyntaxError ? "This file is not valid JSON." : error.message);
+      }
+    }
+
+    function normalizeScene(raw) {
+      if (Array.isArray(raw.tracks) && Array.isArray(raw.map_features)) {
+        const roads = [];
+        for (const feature of raw.map_features) {
+          for (const type of Object.keys(colors)) {
+            if (!feature[type]) continue;
+            const item = feature[type];
+            const geometry = item.polyline || item.polygon || (item.position ? [item.position] : []);
+            if (geometry.length) roads.push({ type, geometry });
+            break;
+          }
+        }
+        const objects = raw.tracks.map(track => ({
+          id: track.id,
+          type: ({ TYPE_VEHICLE: "vehicle", TYPE_PEDESTRIAN: "pedestrian", TYPE_CYCLIST: "cyclist" })[track.object_type] || "vehicle",
+          position: track.states.map(s => ({ x: s.center_x, y: s.center_y })),
+          heading: track.states.map(s => s.heading || 0),
+          valid: track.states.map(s => Boolean(s.valid && Number.isFinite(s.center_x) && Number.isFinite(s.center_y))),
+          length: firstValid(track.states, "length", 4.5),
+          width: firstValid(track.states, "width", 1.9)
+        }));
+        return {
+          scenarioId: raw.scenario_id || "scenario", roads, objects,
+          sdc: raw.sdc_track_index,
+          predicted: new Set((raw.tracks_to_predict || []).map(item => item.track_index))
+        };
+      }
+      if (Array.isArray(raw.objects) && Array.isArray(raw.roads)) {
+        return {
+          scenarioId: raw.scenario_id || raw.name || "scenario",
+          roads: raw.roads, objects: raw.objects,
+          sdc: raw.metadata && raw.metadata.sdc_track_index,
+          predicted: new Set(((raw.metadata && raw.metadata.tracks_to_predict) || []).map(item => item.track_index))
+        };
+      }
+      throw new Error("This is a summary JSON. Full tracks and map features are required for a 2D map.");
+    }
+
+    function firstValid(states, key, fallback) {
+      const state = states.find(item => item.valid && Number.isFinite(item[key]));
+      return state ? state[key] : fallback;
+    }
+
+    function resizeCanvas() {
+      const rect = wrap.getBoundingClientRect();
+      const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      const width = Math.max(1, Math.floor(rect.width * ratio));
+      const height = Math.max(1, Math.floor(rect.height * ratio));
+      if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+      return { width, height, ratio };
+    }
+
+    function validAt(obj, frame) {
+      return (!obj.valid || obj.valid[frame]) && obj.position[frame] && Number.isFinite(obj.position[frame].x) && Number.isFinite(obj.position[frame].y);
+    }
+
+    function sceneBounds(scene) {
+      const xs = [], ys = [];
+      scene.roads.forEach(road => road.geometry.forEach(p => { if (Number.isFinite(p.x) && Number.isFinite(p.y)) { xs.push(p.x); ys.push(p.y); } }));
+      scene.objects.forEach(obj => obj.position.forEach((p, i) => { if (validAt(obj, i)) { xs.push(p.x); ys.push(p.y); } }));
+      if (!xs.length) throw new Error("No drawable coordinates were found.");
+      return [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    }
+
+    function drawScene() {
+      if (!state.scene) return;
+      try {
+        const { width, height, ratio } = resizeCanvas();
+        ctx.fillStyle = "#ebe7df"; ctx.fillRect(0, 0, width, height);
+        const [minX, maxX, minY, maxY] = sceneBounds(state.scene);
+        const pad = 45 * ratio;
+        const worldW = Math.max(maxX - minX, 1), worldH = Math.max(maxY - minY, 1);
+        const scale = Math.min((width - 2 * pad) / worldW, (height - 2 * pad) / worldH);
+        const ox = (width - worldW * scale) / 2, oy = (height - worldH * scale) / 2;
+        const project = p => [ox + (p.x - minX) * scale, height - oy - (p.y - minY) * scale];
+
+        for (const road of state.scene.roads) {
+          const points = road.geometry.filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
+          if (points.length < 2) continue;
+          ctx.beginPath(); points.forEach((p, i) => { const [x, y] = project(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+          ctx.strokeStyle = colors[road.type] || "rgba(100,105,103,.7)";
+          ctx.lineWidth = (road.type === "road_edge" || road.type === "road_line" ? 1.6 : .8) * ratio;
+          ctx.stroke();
+        }
+
+        let moving = 0;
+        state.scene.objects.forEach((obj, index) => {
+          const trajectory = obj.position.filter((p, i) => validAt(obj, i));
+          const color = objectColor(state.scene, obj, index);
+          if (trajectory.length > 1) {
+            const a = trajectory[0], b = trajectory[trajectory.length - 1];
+            if (Math.hypot(b.x - a.x, b.y - a.y) >= 1) {
+              moving++;
+              if (trajectoryToggle.checked) {
+                ctx.beginPath(); trajectory.forEach((p, i) => { const [x, y] = project(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+                ctx.strokeStyle = color.replace("rgb", "rgba").replace(")", ",.55)"); ctx.lineWidth = 1.7 * ratio; ctx.stroke();
+              }
+            }
+          }
+          const frame = Math.min(state.currentFrame, obj.position.length - 1);
+          if (frame >= 0 && validAt(obj, frame)) drawObject(obj, frame, project, scale, color, ratio);
+        });
+
+        document.getElementById("scenarioStatus").textContent = `Scenario ${state.scene.scenarioId}`;
+        document.getElementById("objectStatus").textContent = `${state.scene.objects.length} objects, ${moving} moving tracks`;
+        document.getElementById("headerStatus").textContent = state.fileName;
+      } catch (error) { showError(error.message); }
+    }
+
+    function objectColor(scene, obj, index) {
+      if (index === scene.sdc) return "rgb(25,103,210)";
+      if (scene.predicted.has(index)) return "rgb(191,63,47)";
+      if (obj.type === "pedestrian" || obj.type === "cyclist") return "rgb(141,90,194)";
+      return "rgb(44,139,87)";
+    }
+
+    function drawObject(obj, frame, project, scale, color, ratio) {
+      const p = obj.position[frame], [cx, cy] = project(p);
+      const length = Math.max(5 * ratio, (obj.length || 4.5) * scale);
+      const width = Math.max(3 * ratio, (obj.width || 1.9) * scale);
+      const heading = (obj.heading && obj.heading[frame]) || 0;
+      const fx = Math.cos(-heading), fy = Math.sin(-heading), sx = -fy, sy = fx;
+      const corners = [[1,1],[1,-1],[-1,-1],[-1,1]].map(([f,s]) => [cx + fx*length*f/2 + sx*width*s/2, cy + fy*length*f/2 + sy*width*s/2]);
+      ctx.beginPath(); corners.forEach(([x,y],i) => i ? ctx.lineTo(x,y) : ctx.moveTo(x,y)); ctx.closePath();
+      ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = "rgba(255,255,255,.95)"; ctx.lineWidth = ratio; ctx.stroke();
+    }
+
+    function savePng() {
+      if (!state.scene) return;
+      const link = document.createElement("a");
+      link.download = `${state.scene.scenarioId}_2d.png`;
+      link.href = canvas.toDataURL("image/png"); link.click();
+    }
+
+    function showError(message) {
+      errorState.textContent = message; errorState.classList.remove("hidden");
+      emptyState.classList.add("hidden"); saveButton.disabled = true;
+    }
+    function hideError() { errorState.classList.add("hidden"); }
+
+    new ResizeObserver(() => { if (state.scene) drawScene(); }).observe(wrap);
+  </script>
+</body>
+</html>

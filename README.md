@@ -143,6 +143,22 @@ training_visualizations/
 
 The following commands use the Windows virtual environment.
 
+Open the drag-and-drop 2D viewer:
+
+```powershell
+.\open_waymo_2d_gui.bat
+```
+
+Then drag a folder of exported Waymo scenario JSON files into the page and
+click a scenario name. This is the fastest way to inspect roundabouts and
+vehicle trajectories.
+
+Create a static 2D PNG in `Downloads/Waymo_2D`:
+
+```powershell
+.\waymo_json_to_2d.bat scenario.json
+```
+
 Create a top-down replay:
 
 ```powershell
@@ -180,6 +196,8 @@ visualizations/
 | `scripts/visualize_minimal_ppo.py` | Runs a checkpoint and records native 3D video |
 | `scripts/visualize_waymo_json.py` | Creates a top-down JSON replay |
 | `scripts/render_waymo_follow_3d.py` | Creates a lightweight 3D chase replay |
+| `waymo_2d_gui.html` | Drag-and-drop browser viewer for full Waymo JSON scenarios |
+| `scripts/waymo_json_to_2d.py` | Converts full Waymo JSON scenarios to static 2D PNGs |
 | `docs/src/minimal-ppo.md` | More detail about PPO and command options |
 
 ## Current limitation

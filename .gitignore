@@ -198,5 +198,6 @@ docs/book/*
 /outputs/
 /pufferdrive_headless_demo.mp4
 /tfrecord-*.json
+/scenario_*.json
 /waymo_viewer_server.*.log
 /pufferlib/resources/drive/waymo_*_json/

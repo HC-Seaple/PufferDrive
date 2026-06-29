@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Waymo Scenario Viewer</title>
+  <style>
+    :root {
+      --bg: #f5f3ef;
+      --panel: #ffffff;
+      --ink: #1d252c;
+      --muted: #65707a;
+      --line: #d8d2c8;
+      --accent: #1967d2;
+      --accent-2: #bf3f2f;
+      --lane: #9aa0a6;
+      --road-edge: #3f474f;
+      --road-line: #c9a227;
+      --crosswalk: #7c6fb0;
+      --speed-bump: #d66f2c;
+      --driveway: #7b8b5c;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Segoe UI", Arial, sans-serif;
+      overflow: hidden;
+    }
+
+    .app {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      height: 100vh;
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: minmax(240px, 1.2fr) auto auto minmax(180px, 1fr) auto auto auto auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.94);
+      box-shadow: 0 1px 4px rgba(40, 35, 28, 0.08);
+      z-index: 2;
+    }
+
+    select,
+    button,
+    input[type="range"],
+    label.file-label {
+      min-height: 36px;
+    }
+
+    select,
+    button,
+    label.file-label {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      border-radius: 6px;
+      padding: 0 10px;
+      font: inherit;
+    }
+
+    button,
+    label.file-label {
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+      min-width: 64px;
+    }
+
+    button:disabled {
+      cursor: default;
+      opacity: 0.45;
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+
+    .readout {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+      text-align: right;
+    }
+
+    .stage {
+      position: relative;
+      min-height: 0;
+      background: #ebe7df;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .hud {
+      position: absolute;
+      left: 12px;
+      bottom: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      max-width: calc(100% - 24px);
+      pointer-events: none;
+    }
+
+    .chip {
+      min-height: 28px;
+      padding: 5px 8px;
+      border: 1px solid rgba(29, 37, 44, 0.15);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.86);
+      color: var(--ink);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 5px;
+      vertical-align: -1px;
+    }
+
+    @media (max-width: 900px) {
+      .toolbar {
+        grid-template-columns: 1fr auto auto;
+      }
+
+      .toolbar input[type="range"],
+      .toolbar .readout {
+        grid-column: 1 / -1;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="toolbar">
+      <select id="scenarioSelect" aria-label="scenario"></select>
+      <button id="playBtn" class="primary" type="button">播放</button>
+      <button id="resetBtn" type="button">归零</button>
+      <input id="frameSlider" type="range" min="0" max="90" value="0" step="1" aria-label="frame">
+      <button id="trailBtn" type="button" aria-pressed="true">轨迹</button>
+      <button id="fitBtn" type="button">适配</button>
+      <label class="file-label" for="fileInput">打开 JSON</label>
+      <input id="fileInput" type="file" accept=".json,application/json">
+      <div id="readout" class="readout">帧 0 / 90</div>
+    </div>
+    <main class="stage">
+      <canvas id="canvas"></canvas>
+      <div class="hud">
+        <div class="chip"><span class="dot" style="background:#1967d2"></span>SDC</div>
+        <div class="chip"><span class="dot" style="background:#bf3f2f"></span>预测目标</div>
+        <div class="chip"><span class="dot" style="background:#2c8b57"></span>其他车辆</div>
+        <div class="chip"><span class="dot" style="background:#8d5ac2"></span>行人/骑行者</div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const SCENARIOS = [
+      "tfrecord-00000-of-01000_860855960d365ca6.json",
+      "tfrecord-00000-of-01000_fd6cbf64a1b8872e.json",
+    ];
+
+    const ROAD_STYLES = {
+      lane: ["#9aa0a6", 1.0],
+      road_edge: ["#3f474f", 1.5],
+      road_line: ["#c9a227", 1.2],
+      crosswalk: ["#7c6fb0", 1.2],
+      speed_bump: ["#d66f2c", 1.2],
+      stop_sign: ["#bf3f2f", 2.8],
+      driveway: ["#7b8b5c", 1.0],
+    };
+
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const select = document.getElementById("scenarioSelect");
+    const playBtn = document.getElementById("playBtn");
+    const resetBtn = document.getElementById("resetBtn");
+    const fitBtn = document.getElementById("fitBtn");
+    const trailBtn = document.getElementById("trailBtn");
+    const slider = document.getElementById("frameSlider");
+    const fileInput = document.getElementById("fileInput");
+    const readout = document.getElementById("readout");
+
+    let scenario = null;
+    let frame = 0;
+    let playing = false;
+    let showTrails = true;
+    let timer = null;
+    let view = { scale: 1, offsetX: 0, offsetY: 0 };
+    let drag = null;
+
+    for (const file of SCENARIOS) {
+      const option = document.createElement("option");
+      option.value = file;
+      option.textContent = file.replace("tfrecord-00000-of-01000_", "").replace(".json", "");
+      select.appendChild(option);
+    }
+
+    function validAt(obj, t) {
+      const valid = obj.valid;
+      return !valid || valid[t] === true;
+    }
+
+    function pointAt(obj, t) {
+      return obj.position && obj.position[t] ? obj.position[t] : null;
+    }
+
+    function computeBounds(data) {
+      const xs = [];
+      const ys = [];
+      for (const road of data.roads || []) {
+        for (const p of road.geometry || []) {
+          if (Number.isFinite(p.x) && Number.isFinite(p.y)) {
+            xs.push(p.x);
+            ys.push(p.y);
+          }
+        }
+      }
+      for (const obj of data.objects || []) {
+        for (let i = 0; i < (obj.position || []).length; i += 1) {
+          const p = obj.position[i];
+          if (p && validAt(obj, i) && Number.isFinite(p.x) && Number.isFinite(p.y)) {
+            xs.push(p.x);
+            ys.push(p.y);
+          }
+        }
+      }
+      return {
+        minX: Math.min(...xs),
+        maxX: Math.max(...xs),
+        minY: Math.min(...ys),
+        maxY: Math.max(...ys),
+      };
+    }
+
+    function resizeCanvas() {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.round(rect.width * dpr));
+      canvas.height = Math.max(1, Math.round(rect.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      draw();
+    }
+
+    function fitView() {
+      if (!scenario) return;
+      const rect = canvas.getBoundingClientRect();
+      const bounds = scenario.bounds;
+      const pad = 36;
+      const worldW = Math.max(1, bounds.maxX - bounds.minX);
+      const worldH = Math.max(1, bounds.maxY - bounds.minY);
+      const scale = Math.min((rect.width - pad * 2) / worldW, (rect.height - pad * 2) / worldH);
+      view.scale = Math.max(0.1, scale);
+      view.offsetX = pad - bounds.minX * view.scale + (rect.width - pad * 2 - worldW * view.scale) / 2;
+      view.offsetY = pad + bounds.maxY * view.scale + (rect.height - pad * 2 - worldH * view.scale) / 2;
+      draw();
+    }
+
+    function worldToScreen(x, y) {
+      return {
+        x: x * view.scale + view.offsetX,
+        y: -y * view.scale + view.offsetY,
+      };
+    }
+
+    function drawPolyline(points, color, width, alpha = 1) {
+      if (!points || points.length < 2) return;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(1, width);
+      ctx.beginPath();
+      let started = false;
+      for (const p of points) {
+        if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+        const q = worldToScreen(p.x, p.y);
+        if (!started) {
+          ctx.moveTo(q.x, q.y);
+          started = true;
+        } else {
+          ctx.lineTo(q.x, q.y);
+        }
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function objectColor(obj, index) {
+      const meta = scenario.metadata || {};
+      const predicted = new Set((meta.tracks_to_predict || []).map((track) => track.track_index));
+      if (index === meta.sdc_track_index) return "#1967d2";
+      if (predicted.has(index) || obj.mark_as_expert) return "#bf3f2f";
+      if (obj.type === "pedestrian" || obj.type === "cyclist") return "#8d5ac2";
+      return "#2c8b57";
+    }
+
+    function drawObject(obj, index, t) {
+      const p = pointAt(obj, t);
+      if (!p || !validAt(obj, t)) return;
+
+      const color = objectColor(obj, index);
+      if (showTrails) {
+        const trail = [];
+        for (let i = 0; i <= t; i += 1) {
+          const tp = pointAt(obj, i);
+          if (tp && validAt(obj, i)) trail.push(tp);
+        }
+        drawPolyline(trail, color, 1.2, 0.34);
+      }
+
+      const center = worldToScreen(p.x, p.y);
+      const length = Math.max(3, (obj.length || 4) * view.scale);
+      const width = Math.max(2, (obj.width || 2) * view.scale);
+      const heading = Array.isArray(obj.heading) ? obj.heading[t] || 0 : 0;
+
+      ctx.save();
+      ctx.translate(center.x, center.y);
+      ctx.rotate(-heading);
+      ctx.fillStyle = color;
+      ctx.strokeStyle = "rgba(255,255,255,0.88)";
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.rect(-length / 2, -width / 2, length, width);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
+      ctx.beginPath();
+      ctx.moveTo(length / 2, 0);
+      ctx.lineTo(length / 2 - Math.min(8, length * 0.25), -width * 0.35);
+      ctx.lineTo(length / 2 - Math.min(8, length * 0.25), width * 0.35);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function draw() {
+      const rect = canvas.getBoundingClientRect();
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      ctx.fillStyle = "#ebe7df";
+      ctx.fillRect(0, 0, rect.width, rect.height);
+
+      if (!scenario) return;
+
+      for (const road of scenario.roads || []) {
+        const [color, width] = ROAD_STYLES[road.type] || ["#777", 1];
+        drawPolyline(road.geometry, color, width, road.type === "lane" ? 0.48 : 0.72);
+      }
+
+      scenario.objects.forEach((obj, index) => drawObject(obj, index, frame));
+      readout.textContent = `${scenario.scenario_id || scenario.name} | 帧 ${frame} / ${scenario.maxFrame}`;
+    }
+
+    async function loadScenario(source) {
+      stop();
+      let data;
+      if (source instanceof File) {
+        data = JSON.parse(await source.text());
+        select.value = "";
+      } else {
+        data = await fetch(source).then((res) => {
+          if (!res.ok) throw new Error(`${source}: ${res.status}`);
+          return res.json();
+        });
+      }
+
+      scenario = data;
+      scenario.maxFrame = Math.max(0, ...scenario.objects.map((obj) => (obj.position || []).length - 1));
+      scenario.bounds = computeBounds(scenario);
+      frame = 0;
+      slider.max = scenario.maxFrame;
+      slider.value = frame;
+      fitView();
+      draw();
+    }
+
+    function play() {
+      if (!scenario || playing) return;
+      playing = true;
+      playBtn.textContent = "暂停";
+      timer = setInterval(() => {
+        frame = frame >= scenario.maxFrame ? 0 : frame + 1;
+        slider.value = frame;
+        draw();
+      }, 100);
+    }
+
+    function stop() {
+      playing = false;
+      playBtn.textContent = "播放";
+      if (timer) clearInterval(timer);
+      timer = null;
+    }
+
+    playBtn.addEventListener("click", () => {
+      if (playing) stop();
+      else play();
+    });
+
+    resetBtn.addEventListener("click", () => {
+      frame = 0;
+      slider.value = frame;
+      stop();
+      draw();
+    });
+
+    fitBtn.addEventListener("click", fitView);
+
+    trailBtn.addEventListener("click", () => {
+      showTrails = !showTrails;
+      trailBtn.setAttribute("aria-pressed", String(showTrails));
+      trailBtn.textContent = showTrails ? "轨迹" : "无轨迹";
+      draw();
+    });
+
+    slider.addEventListener("input", () => {
+      frame = Number(slider.value);
+      draw();
+    });
+
+    select.addEventListener("change", () => loadScenario(select.value));
+    fileInput.addEventListener("change", () => {
+      if (fileInput.files[0]) loadScenario(fileInput.files[0]);
+    });
+
+    canvas.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const mx = event.clientX - rect.left;
+      const my = event.clientY - rect.top;
+      const beforeX = (mx - view.offsetX) / view.scale;
+      const beforeY = -(my - view.offsetY) / view.scale;
+      const factor = event.deltaY < 0 ? 1.12 : 0.89;
+      view.scale *= factor;
+      view.offsetX = mx - beforeX * view.scale;
+      view.offsetY = my + beforeY * view.scale;
+      draw();
+    }, { passive: false });
+
+    canvas.addEventListener("pointerdown", (event) => {
+      drag = { x: event.clientX, y: event.clientY, ox: view.offsetX, oy: view.offsetY };
+      canvas.setPointerCapture(event.pointerId);
+    });
+
+    canvas.addEventListener("pointermove", (event) => {
+      if (!drag) return;
+      view.offsetX = drag.ox + event.clientX - drag.x;
+      view.offsetY = drag.oy + event.clientY - drag.y;
+      draw();
+    });
+
+    canvas.addEventListener("pointerup", () => {
+      drag = null;
+    });
+
+    window.addEventListener("resize", () => {
+      resizeCanvas();
+      fitView();
+    });
+
+    resizeCanvas();
+    loadScenario(SCENARIOS[0]).catch((err) => {
+      readout.textContent = err.message;
+      console.error(err);
+    });
+  </script>
+</body>
+</html>
